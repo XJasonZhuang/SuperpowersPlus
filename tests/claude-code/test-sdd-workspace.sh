@@ -307,6 +307,28 @@ PLAN
         echo "    stderr: $es_err"
     fi
 
+    # Markdown examples can contain task headings and shorter nested fences.
+    cat > "$repo/plan-example.md" <<'PLAN'
+### Task 1: Document the workflow
+  ~~~~markdown
+~~~
+### Task 2: Example only
+   ~~~~~
+````markdown
+```
+### Task 3: Another example
+````
+Include the acceptance criteria below the examples.
+### Task 2: Real next task
+PLAN
+    local example_out="$TEST_ROOT/example-brief.md"
+    if (cd "$repo" && "$SDD_SCRIPTS/task-brief" plan-example.md 1 "$example_out" >/dev/null) &&
+        sed '$d' "$repo/plan-example.md" | diff -u - "$example_out"; then
+        pass "task-brief keeps fenced examples and the requirements after them"
+    else
+        fail "task-brief keeps fenced examples and the requirements after them"
+    fi
+
     # --- An unclosed fence hides every later Task heading (#2436) ---
     cat > "$repo/plan-unclosed.md" <<'PLAN'
 # Example Plan
