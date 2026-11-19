@@ -30,6 +30,17 @@ main() {
     TEST_ROOT="$(mktemp -d)"
     trap cleanup EXIT
 
+    # Exercise the inline workflow as installed by extractors that drop
+    # executable bits, keeping the skills' relative paths intact (#2040).
+    local stripped="$TEST_ROOT/skills"
+    local sdd_scripts="$REPO_ROOT/skills/subagent-driven-development/scripts"
+    local stripped_sdd="$stripped/subagent-driven-development/scripts"
+    local stripped_ep="$stripped/executing-plans/scripts"
+    mkdir -p "$stripped_ep" "$stripped_sdd"
+    cp "$EP_SCRIPTS/task-start" "$EP_SCRIPTS/task-done" "$stripped_ep/"
+    cp "$sdd_scripts/task-brief" "$sdd_scripts/sdd-workspace" "$sdd_scripts/sdd-repo" "$stripped_sdd/"
+    chmod a-x "$stripped_ep"/* "$stripped_sdd"/*
+
     git init -q -b main "$TEST_ROOT/repo"
     local repo
     repo="$(cd "$TEST_ROOT/repo" && git rev-parse --show-toplevel)"
@@ -55,7 +66,7 @@ PLAN
 
     # --- task-start: argument validation ---
     local rc=0
-    (cd "$repo" && "$EP_SCRIPTS/task-start" plan.md >/dev/null 2>&1) || rc=$?
+    (cd "$repo" && bash "$stripped_ep/task-start" plan.md >/dev/null 2>&1) || rc=$?
     if [[ "$rc" -eq 2 ]]; then
         pass "task-start without a task number errors with exit 2"
     else
@@ -64,7 +75,7 @@ PLAN
 
     # --- task-start: brief path + BASE in one call ---
     local out
-    out="$(cd "$repo" && "$EP_SCRIPTS/task-start" plan.md 1)"
+    out="$(cd "$repo" && bash "$stripped_ep/task-start" plan.md 1)"
     if [[ "$out" == *"brief: $repo/.superpowers/sdd/plan/task-1-brief.md"* ]]; then
         pass "task-start prints the brief path under the plan's workspace"
     else
@@ -87,7 +98,7 @@ PLAN
     ( cd "$repo" && echo x > work.txt && git add work.txt && git "${git_id[@]}" commit -qm "task 1" )
     local head
     head="$(cd "$repo" && git rev-parse HEAD)"
-    out="$(cd "$repo" && "$EP_SCRIPTS/task-done" plan.md 1 "$base" -- sh -c 'echo "Ran 3 tests"; echo OK')"
+    out="$(cd "$repo" && bash "$stripped_ep/task-done" plan.md 1 "$base" -- sh -c 'echo "Ran 3 tests"; echo OK')"
     rc=$?
     local ledger="$repo/.superpowers/sdd/plan/progress.md"
     local expected="Task 1: complete (commits ${base:0:7}..${head:0:7}, tests: sh -c 'echo \"Ran 3 tests\"; echo OK' → OK)"
@@ -112,7 +123,7 @@ PLAN
 
     # --- task-done: refuses to record a failing task ---
     rc=0
-    out="$(cd "$repo" && "$EP_SCRIPTS/task-done" plan.md 2 "$head" -- sh -c 'echo "FAILED (errors=1)"; exit 1' 2>&1)" || rc=$?
+    out="$(cd "$repo" && bash "$stripped_ep/task-done" plan.md 2 "$head" -- sh -c 'echo "FAILED (errors=1)"; exit 1' 2>&1)" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
         pass "task-done exits non-zero when the test command fails"
     else
@@ -139,7 +150,7 @@ PLAN
     local head2
     head2="$(cd "$repo" && git rev-parse HEAD)"
     rc=0
-    out="$(cd "$repo" && "$EP_SCRIPTS/task-done" plan.md 2 "$head" -- true 2>&1)" || rc=$?
+    out="$(cd "$repo" && bash "$stripped_ep/task-done" plan.md 2 "$head" -- true 2>&1)" || rc=$?
     if [[ "$rc" -eq 0 ]]; then
         pass "task-done exits 0 when a passing test command prints nothing"
     else
@@ -171,7 +182,7 @@ PLAN
         said="git said: fatal: "
         [[ "$where" == no-repo ]] && said="git said: fatal: not a git repository"
         rc=0
-        out="$(cd "$TEST_ROOT/$where" && "$EP_SCRIPTS/task-start" plan.md 1 2>&1)" || rc=$?
+        out="$(cd "$TEST_ROOT/$where" && bash "$stripped_ep/task-start" plan.md 1 2>&1)" || rc=$?
         if [[ "$rc" -eq 2 && "$out" == "$msg"$'\n'"$said"* ]]; then
             pass "task-start in a $where directory exits 2 with the shared message"
         else
@@ -180,7 +191,7 @@ PLAN
             echo "    got: $out"
         fi
         rc=0
-        out="$(cd "$TEST_ROOT/$where" && "$EP_SCRIPTS/task-done" plan.md 1 HEAD -- true 2>&1)" || rc=$?
+        out="$(cd "$TEST_ROOT/$where" && bash "$stripped_ep/task-done" plan.md 1 HEAD -- true 2>&1)" || rc=$?
         if [[ "$rc" -eq 2 && "$out" == "$msg"$'\n'"$said"* ]]; then
             pass "task-done in a $where directory exits 2 with the shared message"
         else
@@ -203,7 +214,7 @@ PLAN
     head_now="$(cd "$repo" && git rev-parse HEAD)"
     before="$(find "$repo/.superpowers" | sort; cat "$repo/.superpowers/sdd/plan/progress.md")"
     rc=0
-    out="$(cd "$TEST_ROOT/no-repo" && "$EP_SCRIPTS/task-start" "$repo/plan.md" 2 2>&1)" || rc=$?
+    out="$(cd "$TEST_ROOT/no-repo" && bash "$stripped_ep/task-start" "$repo/plan.md" 2 2>&1)" || rc=$?
     if [[ "$rc" -eq 2 && "$out" == "$msg"$'\n'"git said: fatal: not a git repository"* ]]; then
         pass "task-start outside any repository stops with the shared message despite a plan in a repository"
     else
@@ -212,7 +223,7 @@ PLAN
         echo "    got: $out"
     fi
     rc=0
-    out="$(cd "$TEST_ROOT/no-repo" && "$EP_SCRIPTS/task-done" "$repo/plan.md" 2 "$head_now" -- true 2>&1)" || rc=$?
+    out="$(cd "$TEST_ROOT/no-repo" && bash "$stripped_ep/task-done" "$repo/plan.md" 2 "$head_now" -- true 2>&1)" || rc=$?
     if [[ "$rc" -eq 2 && "$out" == "$msg"$'\n'"git said: fatal: not a git repository"* ]]; then
         pass "task-done outside any repository stops with the shared message despite a plan in a repository"
     else
