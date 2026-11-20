@@ -84,7 +84,10 @@ Subagent (general-purpose):
     - Tests verify real behavior, not mocks?
     - Edge cases covered?
     - Integration tests where they matter?
-    - All tests passing?
+    - Which required checks does the supplied evidence cover on this revision
+      and target? Read the linked results. Identify missing coverage,
+      regressions in the combined change, or a later failure. Request only the
+      check needed to settle an open finding; cite existing evidence for the rest.
 
     **Production readiness:**
     - Migration strategy if schema changed?

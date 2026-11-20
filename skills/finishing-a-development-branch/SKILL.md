@@ -1,29 +1,23 @@
 ---
 name: finishing-a-development-branch
-description: Use when implementation is complete, all tests pass, and you need to decide how to integrate the work
+description: Use when implementation is ready for branch handoff, a local merge, or a pull request
 ---
 
 # Finishing a Development Branch
 
 ## Overview
 
-**Core principle:** Verify tests → Detect environment → Present options → Execute choice → Clean up.
+**Core principle:** Verify required outcomes → Detect environment → Present options → Execute choice → Clean up.
 
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
-## Step 1: Verify Tests
+## Step 1: Verify the Handoff
 
-Run the project's full test suite (`npm test` / `cargo test` / `pytest` / `go test ./...`).
+**REQUIRED SUB-SKILL:** Use superpowers:verification-before-completion to match existing evidence to the required checks on the exact state being handed off. Inspect the artifacts and run checks with missing or invalidated evidence. Follow any project, CI, or user requirement for a fresh run. Confirm evidence from a dirty worktree still applies to the commit being handed off.
 
-**If tests fail**, report the failures and stop — the menu comes after a green suite:
+For applicable behavior changes, prioritize startup health, the real business flow through its user-visible result, and cleanup of test data.
 
-```
-Tests failing (<N> failures). Must fix before completing:
-
-[Show failures]
-```
-
-**If tests pass:** continue to Step 2.
+If a required check fails or cannot be verified, report the failure or gap. Continue to Step 2 when the pre-integration checks are satisfied.
 
 ## Step 2: Detect Environment
 
@@ -94,23 +88,25 @@ cd "$MAIN_ROOT"
 git checkout <base-branch>
 git pull
 git merge <feature-branch>
-
-# Verify tests on merged result
-<test command>
 ```
 
-If tests fail on the merged result: stop, leave the worktree and branch in
-place, and investigate — nothing has been pushed, so the merge is local
-and recoverable.
+Apply Step 1 to the merged tree. A fast-forward can retain matching evidence.
+Base changes, conflict resolution, or new interactions can invalidate evidence
+and require targeted checks on the merged result. Complete any fresh
+merged-result checks the project or user requires.
 
-Once the merged result is green: clean up the worktree (Step 6), then
-delete the branch:
+If a required merged-result check fails or remains unverified, keep the
+worktree and branch while you investigate. Once verification is satisfied,
+clean up the worktree (Step 6), then delete the branch:
 
 ```bash
 git branch -d <feature-branch>
 ```
 
 ### Option 2: Push and Create PR
+
+Check that the ref being pushed matches the verified state. Follow the
+repository's required CI and PR gates, and report pending checks as pending.
 
 ```bash
 git push -u origin <feature-branch>
@@ -213,13 +209,13 @@ place. If your platform provides a workspace-exit tool, use it.
 
 | Excuse | Reality |
 |--------|---------|
-| "Tests passed earlier this session" | Run the suite on the tree you are about to integrate. A green run only proves the tree it ran on. |
+| "Tests passed earlier this session" | Match the run artifact to the requirement and the code and conditions being integrated. Run checks where that evidence is missing, invalidated, or must be fresh. |
 | "They obviously want it merged" | Integration is your human partner's decision. Present the menu and wait. |
 | "They seem done with this feature — I'll offer to discard it" | The menu is complete as written. Discard happens only when your human partner asks for it in so many words. |
 | "'Yeah, get rid of it' counts as confirmation" | Only the typed word `discard` authorizes deletion. |
 | "The PR is up, so the worktree is clutter now" | PR feedback gets fixed in that worktree. It stays until the work lands. |
 | "This other worktree looks stale — I'll clean it too" | Clean up only worktrees under `.worktrees/` or `worktrees/`. Everything else belongs to the host. |
 | "Removal refused — `--force` is just finishing the cleanup" | The refusal means files exist only in that worktree. `--force` destroys them permanently. Show your human partner and ask. |
-| "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
+| "The merged-result failure is probably flaky" | Keep the branch and worktree while you investigate a failure in a required merged-result check. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |

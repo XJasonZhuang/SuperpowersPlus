@@ -24,6 +24,10 @@ cleanup() {
     fi
 }
 
+evidence_field() {
+    grep -Fxq -- "$(printf '%s=%q' "$2" "$3")" "$1"
+}
+
 main() {
     echo "=== Test: executing-plans scripts ==="
 
@@ -60,7 +64,9 @@ Do the first thing.
 
 Do the second thing.
 PLAN
-    ( cd "$repo" && git add plan.md && git "${git_id[@]}" commit -qm fixture )
+    mkdir "$repo/suite"
+    touch "$repo/suite/.keep"
+    ( cd "$repo" && git add plan.md suite/.keep && git "${git_id[@]}" commit -qm fixture && git config status.showUntrackedFiles no )
     local base
     base="$(cd "$repo" && git rev-parse HEAD)"
 
@@ -94,14 +100,22 @@ PLAN
         fail "task-start writes the brief file"
     fi
 
-    # --- task-done: records a passing task ---
+    # --- task-done: records a passing task and keeps its evidence on retry ---
     ( cd "$repo" && echo x > work.txt && git add work.txt && git "${git_id[@]}" commit -qm "task 1" )
-    local head
+    local head workspace test_command
     head="$(cd "$repo" && git rev-parse HEAD)"
-    out="$(cd "$repo" && bash "$stripped_ep/task-done" plan.md 1 "$base" -- sh -c 'echo "Ran 3 tests"; echo OK')"
+    workspace="$repo/.superpowers/sdd/plan"
+    test_command='if [ -f .superpowers/sdd/retry-marker ]; then
+        cmp -s .superpowers/sdd/plan/task-1-started-attempt .superpowers/sdd/plan/task-1-latest-attempt && exit 93;
+        touch retry-output; echo "FAILED (errors=1)"; exit 3;
+    fi; echo "Ran 3 tests"; echo OK'
+    # The legacy ledger stores a single display line. Flatten the shell snippet
+    # while still passing it as one argv entry to exercise exact capture.
+    test_command=${test_command//$'\n'/ }
+    out="$(cd "$repo" && SUPERPOWERS_TEST_ENVIRONMENT= bash "$stripped_ep/task-done" plan.md 1 "$base" -- sh -c "$test_command")"
     rc=$?
-    local ledger="$repo/.superpowers/sdd/plan/progress.md"
-    local expected="Task 1: complete (commits ${base:0:7}..${head:0:7}, tests: sh -c 'echo \"Ran 3 tests\"; echo OK' → OK)"
+    local ledger="$workspace/progress.md"
+    local expected="Task 1: complete (commits ${base:0:7}..${head:0:7}, tests: sh -c '$test_command' → OK)"
     if [[ -f "$ledger" ]] && grep -qF "$expected" "$ledger"; then
         pass "task-done appends the completion line with commit range and test result"
     else
@@ -115,30 +129,63 @@ PLAN
         fail "task-done prints the tail of the test output"
         echo "    got: $out"
     fi
-    if [[ -s "$repo/.superpowers/sdd/plan/task-1-tests.log" ]]; then
-        pass "task-done keeps the full test output in the workspace"
+    local first_evidence first_log first_hash first_payload first_ledger
+    first_evidence="$(printf '%s\n' "$out" | sed -n 's/^evidence: //p')"
+    first_log="${first_evidence%/*}/tests.log"
+    first_hash="$(git -C "$repo" hash-object --no-filters -- "$first_log")"
+    first_payload="$(cat "$first_evidence")"
+    first_ledger="$(cat "$ledger")"
+    if grep -Fxq -- "Task 1: evidence $first_evidence" "$ledger" &&
+       cmp -s "$first_log" "$workspace/task-1-tests.log" && [[ "$(cat "$first_log")" == $'Ran 3 tests\nOK' ]] &&
+       [[ "$first_evidence" == "$workspace"/task-1-attempt.*/evidence.txt ]] &&
+       [[ "$(cat "$workspace/task-1-started-attempt")" == "$first_evidence" &&
+          "$(cat "$workspace/task-1-latest-attempt")" == "$first_evidence" ]] &&
+       evidence_field "$first_evidence" version 1 &&
+       evidence_field "$first_evidence" base "$base" &&
+       evidence_field "$first_evidence" head_before "$head" &&
+       evidence_field "$first_evidence" head_after "$head" &&
+       evidence_field "$first_evidence" worktree_before clean &&
+       evidence_field "$first_evidence" worktree_after clean &&
+       evidence_field "$first_evidence" cwd "$repo" &&
+       evidence_field "$first_evidence" environment unspecified &&
+       evidence_field "$first_evidence" exit_status 0 &&
+       evidence_field "$first_evidence" log "$first_log" &&
+       evidence_field "$first_evidence" log_git_blob "$first_hash" &&
+       evidence_field "$first_evidence" argc 3 &&
+       [[ "$(grep '^arg=' "$first_evidence")" == "$(printf 'arg=%q\n' sh -c "$test_command")" ]]; then
+        pass "passing attempt records the full output, exact invocation, commit and clean worktree"
     else
-        fail "task-done keeps the full test output in the workspace"
+        fail "passing attempt records the full output, exact invocation, commit and clean worktree"
     fi
 
-    # --- task-done: refuses to record a failing task ---
+    # The same HEAD and command must execute again. Changing an ignored input
+    # changes its result and creates an untracked output counted by Git status.
+    # During the command the started pointer must differ from the prior result.
+    touch "$repo/.superpowers/sdd/retry-marker"
     rc=0
-    out="$(cd "$repo" && bash "$stripped_ep/task-done" plan.md 2 "$head" -- sh -c 'echo "FAILED (errors=1)"; exit 1' 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 ]]; then
-        pass "task-done exits non-zero when the test command fails"
+    out="$(cd "$repo" && SUPERPOWERS_TEST_ENVIRONMENT= bash "$stripped_ep/task-done" plan.md 1 "$base" -- sh -c "$test_command" 2>&1)" || rc=$?
+    local failed_evidence failed_log
+    failed_evidence="$(printf '%s\n' "$out" | sed -n 's/^evidence: //p')"
+    failed_log="${failed_evidence%/*}/tests.log"
+    if [[ "$rc" -eq 3 && "$out" == *"FAILED (errors=1)"* && -f "$repo/retry-output" ]] &&
+       evidence_field "$failed_evidence" exit_status 3 &&
+       evidence_field "$failed_evidence" head_before "$head" &&
+       evidence_field "$failed_evidence" head_after "$head" &&
+       evidence_field "$failed_evidence" worktree_before clean &&
+       evidence_field "$failed_evidence" worktree_after dirty &&
+       cmp -s "$failed_log" "$workspace/task-1-tests.log"; then
+        pass "task-done reruns the same test at the same HEAD and keeps its failed evidence"
     else
-        fail "task-done exits non-zero when the test command fails"
+        fail "task-done reruns the same test at the same HEAD and keeps its failed evidence"
     fi
-    if ! grep -q "Task 2: complete" "$ledger"; then
-        pass "task-done does not record a failing task as complete"
+    if [[ "$failed_evidence" != "$first_evidence" && "$(cat "$first_evidence")" == "$first_payload" &&
+          "$(cat "$workspace/task-1-started-attempt")" == "$failed_evidence" &&
+          "$(cat "$workspace/task-1-latest-attempt")" == "$failed_evidence" &&
+          "$(git -C "$repo" hash-object --no-filters -- "$first_log")" == "$first_hash" &&
+          "$(cat "$ledger")" == "$first_ledger" ]]; then
+        pass "failed retry advances both pointers and preserves the prior record, full log and ledger"
     else
-        fail "task-done does not record a failing task as complete"
-    fi
-    if [[ "$out" == *"FAILED"* ]]; then
-        pass "task-done shows the failing output"
-    else
-        fail "task-done shows the failing output"
-        echo "    got: $out"
+        fail "failed retry advances both pointers and preserves the prior record, full log and ledger"
     fi
 
     # --- task-done: records a passing task whose test command prints nothing ---
@@ -149,21 +196,50 @@ PLAN
     ( cd "$repo" && echo y > work2.txt && git add work2.txt && git "${git_id[@]}" commit -qm "task 2" )
     local head2
     head2="$(cd "$repo" && git rev-parse HEAD)"
+    local silent_command='test "$1" = "value with spaces" && rm ../retry-output'
     rc=0
-    out="$(cd "$repo" && bash "$stripped_ep/task-done" plan.md 2 "$head" -- true 2>&1)" || rc=$?
+    out="$(cd "$repo/suite" && SUPERPOWERS_TEST_ENVIRONMENT="local isolated" bash "$stripped_ep/task-done" ../plan.md 2 "$head" -- sh -c "$silent_command" runner 'value with spaces' 2>&1)" || rc=$?
     if [[ "$rc" -eq 0 ]]; then
         pass "task-done exits 0 when a passing test command prints nothing"
     else
         fail "task-done exits 0 when a passing test command prints nothing (got rc=$rc)"
         echo "    got: $out"
     fi
-    local expected2="Task 2: complete (commits ${head:0:7}..${head2:0:7}, tests: true → (no output))"
+    local expected2="Task 2: complete (commits ${head:0:7}..${head2:0:7}, tests: sh -c '$silent_command' runner 'value with spaces' → (no output))"
     if [[ -f "$ledger" ]] && grep -qF "$expected2" "$ledger"; then
         pass "task-done records a passing task that printed no output"
     else
         fail "task-done records a passing task that printed no output"
         echo "    expected: $expected2"
         echo "    ledger:"; sed 's/^/      /' "$ledger" 2>/dev/null || echo "      (missing)"
+    fi
+    local silent_evidence
+    silent_evidence="$(printf '%s\n' "$out" | sed -n 's/^evidence: //p')"
+    if evidence_field "$silent_evidence" cwd "$repo/suite" &&
+       evidence_field "$silent_evidence" environment 'local isolated' &&
+       evidence_field "$silent_evidence" worktree_before dirty &&
+       evidence_field "$silent_evidence" worktree_after clean &&
+       [[ "$(grep '^arg=' "$silent_evidence")" == "$(printf 'arg=%q\n' sh -c "$silent_command" runner 'value with spaces')" ]]; then
+        pass "evidence distinguishes the actual cwd, supplied environment and cleanup"
+    else
+        fail "evidence distinguishes the actual cwd, supplied environment and cleanup"
+    fi
+
+    # A successful command spanning two revisions cannot certify either.
+    local before_change after_change changed_record
+    before_change="$(git -C "$repo" rev-parse HEAD)"
+    rc=0
+    (cd "$repo" && bash "$stripped_ep/task-done" plan.md 3 "$before_change" -- git "${git_id[@]}" commit --allow-empty -qm 'change during test') >/dev/null 2>&1 || rc=$?
+    after_change="$(git -C "$repo" rev-parse HEAD)"
+    changed_record="$(cat "$workspace/task-3-latest-attempt")"
+    if [[ "$rc" -ne 0 && "$before_change" != "$after_change" ]] &&
+       evidence_field "$changed_record" exit_status 0 &&
+       evidence_field "$changed_record" head_before "$before_change" &&
+       evidence_field "$changed_record" head_after "$after_change" &&
+       ! grep -q '^Task 3: complete' "$ledger"; then
+        pass "a successful test spanning different revisions cannot complete the task"
+    else
+        fail "a successful test spanning different revisions cannot complete the task"
     fi
 
     # --- no usable repository: every helper stops with one message (#2242, #2429) ---

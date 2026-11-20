@@ -17,9 +17,8 @@ task. This skill keeps what those two things bought, by other means: the
 brief is the spec, the ledger is your memory, TDD is the per-task gate, and
 the final reviewer is the second pair of eyes.
 
-**Core principle:** The plan already did the thinking. Execute it exactly,
-prove each step with a test you watched fail and then pass, and leave a
-record that survives your own forgetting.
+**Core principle:** Follow the plan, prove changes with RED→GREEN where
+required, and leave verification evidence the next stage can use.
 
 **Narration:** between tool calls, narrate at most one short line — the
 ledger and the tool results carry the record.
@@ -72,36 +71,34 @@ digraph process {
     subgraph cluster_per_task {
         label="Per Task";
         "task-start: brief + BASE; read the brief" [shape=box];
-        "Work the steps in order: TDD, run every verification, read every output" [shape=box];
-        "Step output matches plan's Expected?" [shape=diamond];
+        "Work the steps in order: TDD and distinct checks" [shape=box];
+        "Evidence matches plan's Expected?" [shape=diamond];
         "Plan wrong? Rule and ledger. Code wrong? systematic-debugging" [shape=box];
         "Commit as the plan's commit steps say" [shape=box];
-        "Completion contract met?" [shape=diamond];
-        "task-done: run tests, ledger the result; mark todo complete" [shape=box];
+        "Complete task with final test evidence" [shape=box];
     }
 
     "Setup: worktree, workspace + ledger, read plan + spec, pre-flight scan" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Final whole-branch review (fresh reviewer if you have one)" [shape=box];
-    "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger" [shape=box];
-    "Final review clean: delete this plan's workspace" [shape=box];
+    "Re-grade, then: Critical/Important → ONE fix pass, RED→GREEN + affected checks; Minor → ledger" [shape=box];
+    "Hand off verification evidence" [shape=box];
     "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
     "Setup: worktree, workspace + ledger, read plan + spec, pre-flight scan" -> "task-start: brief + BASE; read the brief";
-    "task-start: brief + BASE; read the brief" -> "Work the steps in order: TDD, run every verification, read every output";
-    "Work the steps in order: TDD, run every verification, read every output" -> "Step output matches plan's Expected?";
-    "Step output matches plan's Expected?" -> "Plan wrong? Rule and ledger. Code wrong? systematic-debugging" [label="no"];
-    "Plan wrong? Rule and ledger. Code wrong? systematic-debugging" -> "Work the steps in order: TDD, run every verification, read every output";
-    "Step output matches plan's Expected?" -> "Commit as the plan's commit steps say" [label="yes, last step"];
-    "Commit as the plan's commit steps say" -> "Completion contract met?";
-    "Completion contract met?" -> "Work the steps in order: TDD, run every verification, read every output" [label="no - finish the task"];
-    "Completion contract met?" -> "task-done: run tests, ledger the result; mark todo complete" [label="yes"];
-    "task-done: run tests, ledger the result; mark todo complete" -> "More tasks remain?";
+    "task-start: brief + BASE; read the brief" -> "Work the steps in order: TDD and distinct checks";
+    "Work the steps in order: TDD and distinct checks" -> "Evidence matches plan's Expected?";
+    "Evidence matches plan's Expected?" -> "Plan wrong? Rule and ledger. Code wrong? systematic-debugging" [label="no"];
+    "Plan wrong? Rule and ledger. Code wrong? systematic-debugging" -> "Work the steps in order: TDD and distinct checks";
+    "Evidence matches plan's Expected?" -> "Commit as the plan's commit steps say" [label="yes, after intermediate checks"];
+    "Commit as the plan's commit steps say" -> "Complete task with final test evidence";
+    "Complete task with final test evidence" -> "Work the steps in order: TDD and distinct checks" [label="failed or missing evidence"];
+    "Complete task with final test evidence" -> "More tasks remain?" [label="verified and recorded"];
     "More tasks remain?" -> "task-start: brief + BASE; read the brief" [label="yes"];
     "More tasks remain?" -> "Final whole-branch review (fresh reviewer if you have one)" [label="no"];
-    "Final whole-branch review (fresh reviewer if you have one)" -> "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger";
-    "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger" -> "Final review clean: delete this plan's workspace";
-    "Final review clean: delete this plan's workspace" -> "Use superpowers:finishing-a-development-branch";
+    "Final whole-branch review (fresh reviewer if you have one)" -> "Re-grade, then: Critical/Important → ONE fix pass, RED→GREEN + affected checks; Minor → ledger";
+    "Re-grade, then: Critical/Important → ONE fix pass, RED→GREEN + affected checks; Minor → ledger" -> "Hand off verification evidence";
+    "Hand off verification evidence" -> "Use superpowers:finishing-a-development-branch";
 }
 ```
 
@@ -129,13 +126,10 @@ and the new one resumes from the same ledger.
   (`<repo-root>/.superpowers/sdd/<plan-basename>/`), home to every
   artifact for THIS plan: ledger, briefs, review packages. Another plan's
   directory is never yours to read or write.
-- Check for this plan's ledger at `<workspace>/progress.md`. If its first
-  line names your plan file, tasks with a `Task <N>: complete` line are
-  DONE — do not redo them; resume at the first task without one. Their
-  commits exist in git even when your context no longer remembers making
-  them: after compaction, trust the ledger and `git log` over your own
-  recollection. A ledger whose first line names a different plan file is
-  another plan's progress: leave it and start your own, fresh.
+- Check for this plan's ledger at `<workspace>/progress.md`. If it exists,
+  use [the shared resumption rules](../subagent-driven-development/references/resuming.md)
+  to reconcile completed tasks with their latest evidence. Preserve their
+  commits and pick up at the first unfinished task or unresolved check.
 - Create the ledger with its identity as the first line:
   `# SDD ledger — plan: <plan file path>`.
 - `git clean -fdx` will destroy the workspace (it's git-ignored scratch);
@@ -190,8 +184,12 @@ step's code is written first and run first. Watching it fail is a step,
 not a formality — a test that passes before the implementation exists is
 a finding about the test.
 
-Every step that runs a command has an `Expected:` line. Run the command,
-read its output, and compare. Three outcomes:
+Compare each step's `Expected:` line with real output. Run distinct checks
+at the relevant step, including required RED and GREEN runs. When a repeated
+verification has equivalent passing evidence, refer to that output using
+superpowers:verification-before-completion. Run the final task command
+through `task-done` on its first final invocation (see below). Three
+outcomes for a check:
 
 - **Matches.** Next step.
 - **The code is wrong.** Use superpowers:systematic-debugging. Find the
@@ -208,13 +206,13 @@ is fine; BASE is what the review range is cut from, never `HEAD~1`.
 
 ### 3. The completion contract
 
-Before a task's ledger line, all of the following are true, with evidence
-in this session — not inferred from the diff looking right:
+Before marking a task complete, confirm all of the following against real
+output:
 
-- Every test the brief names exists and ran in this task, and you read
-  the output.
-- The final test run for the task passed — `task-done` is that run, and
-  it writes the command and result into the ledger line.
+- The tests the brief requires exist and have evidence for their required
+  outcomes, including RED→GREEN where applicable.
+- The final task check passed. The ledger points to the command, result
+  and supporting evidence.
 - Every `Expected:` line in the brief was compared against real output.
 - Every deviation from the brief has a `Ruling:` line in the ledger.
 
@@ -223,21 +221,38 @@ the claim. If any item is missing, the task is not complete: finish it.
 
 ### 4. Complete the task
 
-Run this skill's `bash scripts/task-done PLAN_FILE N BASE -- <test command>`
-by its absolute path, from the working tree you're executing in, with the test command the brief names for the whole task. It runs the
-tests, keeps the full output in the workspace, prints the tail, and — only
-if they pass — appends the completion line to the ledger:
+Route the first run of the brief's final task command through this skill's
+`bash scripts/task-done PLAN_FILE N BASE -- <test command>` by its absolute
+path, from the working tree you're executing in. When the last planned
+check is that final command, use `task-done` to run it once and compare its
+output with the plan's `Expected:` line. The command must exit nonzero if
+its required assertions fail. The helper keeps the full output and evidence
+record for each attempt in the workspace, prints the tail and evidence path,
+and appends this completion line only on success:
 
 `Task <N>: complete (commits <base7>..<head7>, tests: <command> → <result>)`
 
-A failing run records nothing; the task is not complete. When it records,
-mark the todo complete and take the next task.
+The helper links the evidence in the ledger. Record any scope or relevant
+environment details the evidence does not establish. You can supply a
+non-secret target label via `SUPERPOWERS_TEST_ENVIRONMENT`.
+A failing run keeps its evidence and leaves the task incomplete. If the
+final command already ran in CI or at a required earlier step, such as
+GREEN before a commit, read its evidence and confirm it still applies under
+superpowers:verification-before-completion. Use that passing result for the
+same ledger completion format and include an evidence pointer alongside
+it. Once the completion contract is met, mark the todo complete.
 
 ## Final Review
 
 Run `bash ../subagent-driven-development/scripts/review-package PLAN_FILE MERGE_BASE HEAD`
 by its absolute path, from the working tree you're executing in (MERGE_BASE = the commit the branch started from, e.g.
 `git merge-base main HEAD`) and review from the file it prints.
+
+Focus the final review on changed behavior, how the tasks integrate, and
+open risks. Include the task evidence and log paths with the review
+package. Read applicable results and identify gaps in coverage. Use focused
+checks for those gaps under superpowers:verification-before-completion.
+Carry the results forward to finishing.
 
 **With a subagent tool:** dispatch the reviewer on the most capable
 available model — the whole-branch review is a judgment task — using
@@ -279,12 +294,12 @@ because the spec was silent has graded the spec, not the effect. Then:
 Fix the Critical and Important findings yourself — you are the
 implementer here — in ONE pass. Each fix is verified by TDD, not by a
 second reviewer: write the test that reproduces the finding, watch it
-fail, make it pass, then run the whole suite. Record each in the ledger as
-`Final: fixed <finding> — <test name> RED→GREEN, suite <N>/<N>`. A fix
-without a test that failed first is not verified; a suite that is not
-green after the pass means the pass is not over. Do not dispatch a
-re-review: it would re-read a diff whose covering tests already answer
-"addressed" and whose suite run already answers "broke nothing".
+fail, and make it pass. After the fixes, verify the workflows and
+dependencies they affected, reusing applicable GREEN evidence. Run a full
+suite when explicitly required or when narrower checks cannot cover the
+affected behavior. Record each fix in the ledger as
+`Final: fixed <finding> — <test name> RED→GREEN, <evidence pointer>`.
+Carry the evidence from this fix pass into finishing.
 
 A finding you decide not to fix is a ruling — `Final: Ruling: <finding> —
 <why the code stands> — <cost if wrong>` — and reaches your human partner
@@ -299,11 +314,16 @@ line under "Deferred minors". Both lists are exhaustive. Your final
 message is the only place the decisions you took on your human partner's
 behalf — and the findings you chose not to act on — reach them.
 
-When the final review is clean and its fixes are committed, delete this
-plan's workspace directory — the git history is the record now. Sibling
-directories belong to other plans; leave them alone.
-
-Use superpowers:finishing-a-development-branch.
+Pass the applicable verification evidence to
+superpowers:finishing-a-development-branch, including results for any
+startup health, core workflow and test-data cleanup checks already run.
+Before deleting the plan workspace or removing its worktree, preserve the
+evidence record and full log in an accessible handoff, CI result or retained
+artifact. The evidence identifies the tested scope, code state, command,
+environment and outcome. If the original files are the only accessible
+copy, retain them until finishing and any later consumer have used them.
+After a clean final review and committed fixes, delete only this plan's
+workspace once this handoff condition is met.
 
 ## Common Rationalizations
 
@@ -311,7 +331,7 @@ Use superpowers:finishing-a-development-branch.
 |--------|---------|
 | "I remember what Task N says" | You remember a summary. The brief has the exact values. Read it. |
 | "The plan's code is right, skip watching the test fail" | A test you never saw fail proves nothing. It is one step. Run it. |
-| "I'll run the full suite at the end instead of per step" | Per-step runs are how you learn which step broke it. The end-of-task run is the contract, not a substitute. |
+| "The final check will cover every intermediate step" | Keep distinct expected outcomes and required RED→GREEN evidence. Use one run for equivalent checks. |
 | "The plan is wrong here, I'll just do the right thing" | Do the right thing and ledger the ruling. Unledgered deviation is a decision made in secret. |
 | "I'll write the ledger lines after a few tasks" | Compaction does not wait for a convenient moment. One line per task, in the same message as the commit. |
 | "Let me check in before the next task" | They chose inline to spend less. Progress prompts spend their time instead. Only the four stops stop you. |
@@ -320,4 +340,4 @@ Use superpowers:finishing-a-development-branch.
 | "Subagents are slow and expensive, I'll skip the final review too" | Inline already removed the per-task reviewers. One review of the whole branch is the floor, not the ceiling. |
 | "The reviewer said Minor, so it's Minor" | The label graded the spec's silence. Grade what the person gets. Re-grade, then gate. |
 | "The fix is obvious, no need for a failing test first" | The failing test is the only proof the finding was real and is now gone. Without it you have a diff and a hope. |
-| "I'll fix the minors too while I'm in there" | Every minor you fix is a test, a fix, and a suite run your partner did not ask for. Ledger them; your partner decides. |
+| "I'll fix the minors too while I'm in there" | Each extra change widens the scope you must verify. Ledger the minors for your partner. |

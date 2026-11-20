@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Close one task of an inline plan execution in a single call: run the task's
-# test command, keep its full output in the workspace, print the tail, and —
-# only if the command succeeded — append the completion line to the ledger.
-# A failing command records nothing: the task is not complete.
+# test command, keep each attempt and its full output in the workspace, print
+# the tail, and append a completion line only if the command succeeded.
 #
 # Usage: task-done PLAN_FILE TASK_NUMBER BASE -- TEST_COMMAND [ARGS...]
 #   BASE is the SHA task-start printed; the completion line records BASE..HEAD.
+#   SUPERPOWERS_TEST_ENVIRONMENT can supply a descriptive environment label.
 # Exit: the test command's exit status.
 set -euo pipefail
 
@@ -23,7 +23,7 @@ sdd="$(cd "$(dirname "$0")/../../subagent-driven-development/scripts" && pwd)"
 # The repository the workspace and ledger belong to (see sdd-repo); BASE and
 # HEAD are read there, not in the bare cwd.
 repo=$("${BASH:-bash}" "$sdd/sdd-repo" --with-commit)
-git -C "$repo" rev-parse --verify --quiet "$base" >/dev/null || { echo "bad BASE: $base" >&2; exit 2; }
+resolved_base=$(git -C "$repo" rev-parse --verify --quiet "$base") || { echo "bad BASE: $base" >&2; exit 2; }
 
 dir=$("${BASH:-bash}" "$sdd/sdd-workspace" "$plan")
 log="$dir/task-${n}-tests.log"
@@ -39,17 +39,71 @@ for a in "$@"; do
 done
 cmd=${cmd# }
 
-rc=0
-"$@" > "$log" 2>&1 || rc=$?
+# The workspace normally ignores its own artifacts. Use Git's view of the
+# entire working tree, including untracked files and changes in submodules.
+worktree_state() {
+  local status
+  if ! status=$(git --no-optional-locks -C "$repo" status --porcelain=v1 --untracked-files=normal --ignore-submodules=none); then
+    printf 'unknown\n'
+  elif [ -n "$status" ]; then
+    printf 'dirty\n'
+  else
+    printf 'clean\n'
+  fi
+}
 
-tail -n 5 "$log"
+cwd=$(pwd -P)
+if command -v cygpath >/dev/null 2>&1; then cwd=$(cygpath -m "$cwd"); fi
+attempt=$(mktemp -d "$dir/task-${n}-attempt.XXXXXXXX")
+attempt_log="$attempt/tests.log"
+evidence="$attempt/evidence.txt"
+
+# A started pointer without a matching completed pointer marks an unfinished
+# attempt, even when an earlier run left a successful ledger entry.
+printf '%s\n' "$evidence" > "$attempt/started.tmp"
+mv -f "$attempt/started.tmp" "$dir/task-${n}-started-attempt"
+head_before=$(git -C "$repo" rev-parse --verify HEAD)
+worktree_before=$(worktree_state)
+rc=0
+("$@") > "$attempt_log" 2>&1 || rc=$?
+head_after=$(git -C "$repo" rev-parse --verify HEAD) || head_after=unknown
+worktree_after=$(worktree_state)
+log_git_blob=$(git -C "$repo" hash-object --no-filters -- "$attempt_log")
+
+# Each field is Bash-escaped for unambiguous values, with one arg per line
+# in invocation order. Readers should treat this as data and never source it.
+{
+  printf '%s=%q\n' version 1 task "$n" base "$resolved_base"
+  printf '%s=%q\n' head_before "$head_before" head_after "$head_after"
+  printf '%s=%q\n' worktree_before "$worktree_before" worktree_after "$worktree_after"
+  printf '%s=%q\n' cwd "$cwd" environment "${SUPERPOWERS_TEST_ENVIRONMENT:-unspecified}"
+  printf '%s=%q\n' exit_status "$rc" log "$attempt_log" log_git_blob "$log_git_blob" argc "$#"
+  for arg in "$@"; do printf 'arg=%q\n' "$arg"; done
+} > "$attempt/evidence.tmp"
+mv "$attempt/evidence.tmp" "$evidence"
+
+# Publish a separate copy at the legacy path. Use a rename so simultaneous
+# attempts cannot mix their output or change another attempt's evidence.
+cp "$attempt_log" "$attempt/latest.tmp"
+mv -f "$attempt/latest.tmp" "$log"
+printf '%s\n' "$evidence" > "$attempt/completed.tmp"
+mv -f "$attempt/completed.tmp" "$dir/task-${n}-latest-attempt"
+tail -n 5 "$attempt_log"
+printf 'evidence: %s\n' "$evidence"
+
 if [ "$rc" -ne 0 ]; then
-  echo "task-done: test command exited $rc; Task $n NOT recorded (full output: $log)" >&2
+  echo "task-done: test command exited $rc; Task $n NOT recorded (full output: $attempt_log)" >&2
   exit "$rc"
 fi
+if [ "$head_after" != "$head_before" ]; then
+  echo "task-done: HEAD changed or became unavailable during the test; Task $n NOT recorded" >&2
+  exit 1
+fi
 
-last=$(grep -v '^[[:space:]]*$' "$log" | tail -n 1) || last="(no output)"
+last=$(grep -v '^[[:space:]]*$' "$attempt_log" | tail -n 1) || last="(no output)"
+short_base=$(git -C "$repo" rev-parse --short=7 "$resolved_base")
+short_head=$(git -C "$repo" rev-parse --short=7 "$head_after")
 [ -f "$ledger" ] || printf '# SDD ledger — plan: %s\n' "$plan" > "$ledger"
-line="Task $n: complete (commits $(git -C "$repo" rev-parse --short=7 "$base")..$(git -C "$repo" rev-parse --short=7 HEAD), tests: $cmd → $last)"
-printf '%s\n' "$line" >> "$ledger"
+line="Task $n: complete (commits $short_base..$short_head, tests: $cmd → $last)"
+printf 'Task %s: evidence %s\n%s\n' "$n" "$evidence" "$line" >> "$ledger"
 echo "ledger: $line"

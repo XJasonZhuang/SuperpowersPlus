@@ -63,13 +63,10 @@ Subagent (general-purpose):
 
     ## Tests
 
-    The implementer re-ran the tests covering the amended code and appended
-    the results to the report file. Treat the report as unverified claims:
-    confirm the fix report names the covering tests and shows their output,
-    and verify the claims against the diff. Do not re-run the suite to
-    confirm their report. Run a test only when reading the code raises a
-    specific doubt that no existing run answers — and then a focused test,
-    never a package-wide suite.
+    Read the fix report's covering tests and use their evidence records and
+    full logs to verify the claims against the diff and amended behavior.
+    Apply superpowers:verification-before-completion. Run a focused test
+    only to resolve a specific doubt that no existing run answers.
 
     ## Output Format
 

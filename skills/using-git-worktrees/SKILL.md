@@ -97,7 +97,7 @@ git worktree add "$path" -b "$BRANCH_NAME"
 cd "$path"
 ```
 
-**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Then run setup and baseline tests in place.
+**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Follow Steps 2 and 3 in place.
 
 ## Step 2: Project Setup
 
@@ -120,22 +120,26 @@ if [ -f go.mod ]; then go mod download; fi
 
 ## Step 3: Verify Clean Baseline
 
-Run tests to ensure workspace starts clean:
+**REQUIRED SUB-SKILL:** Use superpowers:verification-before-completion to check whether existing
+baseline evidence applies to this checkout after setup. A run from another
+worktree can cover the baseline when the tested code and relevant conditions
+match, including dependencies, configuration, and fixtures.
 
-```bash
-# Use project-appropriate command
-npm test / cargo test / pytest / go test ./...
-```
+Run baseline checks where evidence is missing or invalidated. Choose the
+smallest check that verifies the workspace is ready, such as startup health
+or a smoke check for the affected path. Run any project-required or
+user-requested fresh baseline checks.
 
-**If tests fail:** Report failures, ask whether to proceed or investigate.
+**If a baseline check fails:** Report the failure and ask whether to proceed
+or investigate.
 
-**If tests pass:** Report ready.
+**If the baseline is verified:** Report the result and evidence.
 
 ### Report
 
 ```
 Worktree ready at <full-path>
-Tests passing (<N> tests, 0 failures)
+Baseline verified (<checks and evidence>)
 Ready to implement <feature-name>
 ```
 
@@ -153,7 +157,7 @@ Ready to implement <feature-name>
 | Neither exists | Check instruction file, then default `.worktrees/` |
 | Directory not ignored | Add to .gitignore + commit |
 | Permission error on create | Sandbox fallback, work in place |
-| Tests fail during baseline | Report failures + ask |
+| Baseline checks fail | Report failures + ask |
 | No package.json/Cargo.toml | Skip dependency install |
 
 ## Common Rationalizations
@@ -164,4 +168,4 @@ Ready to implement <feature-name>
 | "`git worktree add` is quicker than hunting for a native tool" | A native tool (e.g. `EnterWorktree`) owns placement, branching, and cleanup. Bypassing it is the #1 mistake — it creates phantom state your harness can't see or manage. |
 | "The worktree directory is surely ignored already" | Run `git check-ignore`. An unignored worktree directory commits the whole tree into the repo. |
 | "Any directory name works" | Explicit instructions beat an existing project-local directory, which beats the `.worktrees/` default. |
-| "The workspace is fresh — baseline tests can wait" | A dirty baseline makes every later failure ambiguous. Run the tests now; proceeding past failures is your human partner's call. |
+| "The workspace is fresh — baseline checks can wait" | Establish the baseline now using matching evidence and any needed checks. Report failures before proceeding. |

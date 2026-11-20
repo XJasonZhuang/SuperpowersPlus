@@ -16,6 +16,13 @@ Dispatch a code reviewer subagent to catch issues before they cascade. The revie
 - After completing major feature
 - Before merge to main
 
+When these triggers coincide, one independent review can cover them together.
+Before dispatch, check the recorded reviewer, base/head, requirements and
+verdict. Reuse a completed review covering the same scope and inputs with no
+unresolved blocking findings. If the branch gained other tasks, review their
+interaction and the uncovered diff. Honor any explicitly required separate
+approval or fresh review.
+
 **Optional but valuable:**
 - When stuck (fresh perspective)
 - Before refactoring (baseline check)
@@ -38,6 +45,8 @@ Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md
 - `{PLAN_OR_REQUIREMENTS}` - What it should do
 - `{BASE_SHA}` - Starting commit
 - `{HEAD_SHA}` - Ending commit
+- Include links to prior review findings and to the applicable test or
+  acceptance logs so the reviewer can assess coverage directly.
 
 **3. Act on feedback:**
 - Fix Critical issues immediately

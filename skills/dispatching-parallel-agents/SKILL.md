@@ -61,7 +61,7 @@ Each agent gets:
 - **Specific scope:** One test file or subsystem
 - **Clear goal:** Make these tests pass
 - **Constraints:** Don't change other code
-- **Expected output:** Summary of what you found and fixed
+- **Expected output:** Summary of what you found and fixed, with verification artifacts and the tested state
 
 ### 3. Dispatch in Parallel
 
@@ -78,11 +78,16 @@ Multiple dispatch calls in one response = parallel execution. One per response =
 
 ### 4. Review and Integrate
 
-When agents return:
-- Read each summary
-- Verify fixes don't conflict
-- Run full test suite
-- Integrate all changes
+Read each summary and inspect the diffs for overlapping changes and shared
+dependencies, then integrate the changes.
+
+**REQUIRED SUB-SKILL:** Use superpowers:verification-before-completion on the
+combined result. Reuse task evidence where it still covers the same
+requirement on the integrated state, and verify gaps or invalidated evidence.
+When the changes interact in ways the individual runs did not exercise, run
+a targeted integration check through the affected business flow. Include
+startup health and test-data cleanup where applicable. Follow required
+project, CI, and user gates.
 
 ## Agent Prompt Structure
 
@@ -109,7 +114,8 @@ These are timing/race condition issues. Your task:
 
 Do NOT just increase timeouts - find the real issue.
 
-Return: Summary of what you found and what you fixed.
+Return a summary of what you found and fixed, plus verification artifacts with
+the exact commands, tested state, and results.
 ```
 
 ## Common Mistakes
@@ -124,7 +130,7 @@ Return: Summary of what you found and what you fixed.
 **✅ Constraints:** "Do NOT change production code" or "Fix tests only"
 
 **❌ Vague output:** "Fix it" - you don't know what changed
-**✅ Specific:** "Return summary of root cause and changes"
+**✅ Specific:** "Return the root cause, changes, and verification artifacts"
 
 ## When NOT to Use
 
@@ -156,12 +162,5 @@ Agent 3 → Fix tool-approval-race-conditions.test.ts
 - Agent 2: Fixed event structure bug (threadId in wrong place)
 - Agent 3: Added wait for async tool execution to complete
 
-**Integration:** All fixes independent, no conflicts, full suite green
-
-## Verification
-
-After agents return:
-1. **Review each summary** - Understand what changed
-2. **Check for conflicts** - Did agents edit same code?
-3. **Run full suite** - Verify all fixes work together
-4. **Spot check** - Agents can make systematic errors
+**Integration:** The full suite passed in this session. For future handoffs,
+apply the evidence decision in Step 4.
